@@ -130,6 +130,9 @@ python main.py "https://www.youtube.com/watch?v=xxxx"
 
 # 本地视频
 python main.py "D:/videos/talk.mp4"
+
+# 一次处理多个（链接/本地文件可混用，按顺序逐个跑）
+python main.py "https://youtu.be/aaa" "https://youtu.be/bbb" "D:/videos/talk.mp4"
 ```
 
 ### 常用参数
@@ -145,6 +148,8 @@ python main.py "D:/videos/talk.mp4"
 | `--no-resume`    | 忽略已有中间产物,全部重跑                                     |
 
 > URL 输入会自动用 yt-dlp 抓取标题与简介，无需手填 `--title/--desc`。
+>
+> **传入多个输入时**：`--name/--output/--title/--desc` 会被忽略（改为按各视频自动命名：URL 取视频号、本地文件取文件名）；单个视频失败不中断整批，结束时汇总成败，若有失败则以非零码退出。
 
 示例:
 

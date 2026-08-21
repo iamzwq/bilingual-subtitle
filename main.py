@@ -1,7 +1,9 @@
 """双语字幕流水线编排入口：取视频 → Buzz 转录 → LLM 翻译 → 生成 ASS → ffmpeg 硬烧录。
 
 用法：
-    python main.py <视频文件或URL> [--name 名称] [--config config.toml] [--output 输出.mp4] [--no-resume]
+    python main.py <视频文件或URL> [<视频文件或URL> ...] [--name 名称] [--config config.toml] [--output 输出.mp4] [--no-resume]
+
+传入多个链接/文件时按顺序逐个处理，单个失败不中断整批；此时忽略 --name/--output/--title/--desc（改为按各视频自动命名）。
 """
 
 from __future__ import annotations
@@ -114,40 +116,27 @@ def fetch_metadata(url: str, cache: Path) -> tuple[str, str]:
         return "", ""
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="YouTube 外语视频 → 中外双语硬字幕")
-    parser.add_argument("input", help="本地视频路径或视频 URL")
-    parser.add_argument("--name", help="工作/输出目录名，缺省用文件名或 video")
-    parser.add_argument("--config", default="config.toml", help="配置文件路径")
-    parser.add_argument(
-        "--workdir", default="output", help="产物根目录（中间与最终视频都在 <workdir>/<名称>/）"
-    )
-    parser.add_argument("--output", help="输出视频路径（缺省在工作目录内）")
-    parser.add_argument("--title", default="", help="视频标题（本地文件可选，用作术语表/翻译上下文）")
-    parser.add_argument("--desc", default="", help="视频简介（本地文件可选）")
-    parser.add_argument(
-        "--no-resume", action="store_true", help="忽略已有中间产物，全部重跑"
-    )
-    args = parser.parse_args()
-
-    cfg = load_config(Path(args.config))
-    base_url, api_key, model = resolve_llm(cfg)
-    resume = not args.no_resume
-
-    url_input = is_url(args.input)
-    name = args.name or ("video" if url_input else Path(args.input).stem)
-    video_id = extract_video_id(args.input, url_input)
+def process_one(
+    source: str,
+    *,
+    args: argparse.Namespace,
+    cfg: dict,
+    env,
+    base_url: str,
+    api_key: str,
+    model: str,
+    resume: bool,
+    name_override: str | None,
+    output_override: str | None,
+    title_override: str,
+    desc_override: str,
+) -> Path:
+    """处理单个视频（URL 或本地文件），返回最终输出视频路径。"""
+    url_input = is_url(source)
+    video_id = extract_video_id(source, url_input)
+    name = name_override or (video_id if url_input else Path(source).stem)
     workdir = Path(args.workdir) / name
     workdir.mkdir(parents=True, exist_ok=True)
-
-    env = detect_environment(cfg.get("buzz", {}) | cfg.get("ffmpeg", {}))
-    tcfg = cfg.get("transcribe", {})
-    engine = tcfg.get("engine", "fasterwhisper")
-    model_size = tcfg.get("model_size") or env.buzz_model_size
-    print(
-        f"[环境] GPU={env.has_nvidia} 引擎={engine} "
-        f"模型={model_size} 编码器={env.ffmpeg_encoder}"
-    )
 
     # 阶段1 取视频
     if url_input:
@@ -156,9 +145,9 @@ def main() -> None:
             print("[1/4] 视频已存在，跳过下载")
         else:
             print("[1/4] 下载视频…")
-            download_video(args.input, source_video)
+            download_video(source, source_video)
     else:
-        source_video = Path(args.input).resolve()
+        source_video = Path(source).resolve()
         if not source_video.exists():
             sys.exit(f"输入视频不存在：{source_video}")
         print("[1/4] 使用本地视频")
@@ -178,11 +167,11 @@ def main() -> None:
 
         # 视频元信息（标题/简介）：URL 用 yt-dlp 取，本地文件用 --title/--desc
         if url_input:
-            title, description = fetch_metadata(args.input, workdir / "meta.json")
+            title, description = fetch_metadata(source, workdir / "meta.json")
         else:
             title, description = "", ""
-        title = args.title or title
-        description = args.desc or description
+        title = title_override or title
+        description = desc_override or description
 
         # 术语表（缓存），保证全片译名一致
         glossary_path = workdir / "glossary.json"
@@ -239,8 +228,8 @@ def main() -> None:
 
     # 阶段4 硬烧录
     output = (
-        Path(args.output)
-        if args.output
+        Path(output_override)
+        if output_override
         else workdir / f"{name}_[{video_id}].mp4"
     )
     print("[4/4] ffmpeg 硬烧录…")
@@ -255,6 +244,86 @@ def main() -> None:
         videotoolbox_bitrate=ff.get("videotoolbox_bitrate", "8M"),
     )
     print(f"完成：{output}")
+    return output
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="YouTube 外语视频 → 中外双语硬字幕")
+    parser.add_argument("input", nargs="+", help="一个或多个本地视频路径 / 视频 URL")
+    parser.add_argument("--name", help="工作/输出目录名（仅单个输入时生效，缺省用文件名或视频号）")
+    parser.add_argument("--config", default="config.toml", help="配置文件路径")
+    parser.add_argument(
+        "--workdir", default="output", help="产物根目录（中间与最终视频都在 <workdir>/<名称>/）"
+    )
+    parser.add_argument("--output", help="输出视频路径（仅单个输入时生效，缺省在工作目录内）")
+    parser.add_argument("--title", default="", help="视频标题（仅单个本地文件可选，用作术语表/翻译上下文）")
+    parser.add_argument("--desc", default="", help="视频简介（仅单个本地文件可选）")
+    parser.add_argument(
+        "--no-resume", action="store_true", help="忽略已有中间产物，全部重跑"
+    )
+    args = parser.parse_args()
+
+    cfg = load_config(Path(args.config))
+    base_url, api_key, model = resolve_llm(cfg)
+    resume = not args.no_resume
+
+    env = detect_environment(cfg.get("buzz", {}) | cfg.get("ffmpeg", {}))
+    tcfg = cfg.get("transcribe", {})
+    engine = tcfg.get("engine", "fasterwhisper")
+    model_size = tcfg.get("model_size") or env.buzz_model_size
+    print(
+        f"[环境] GPU={env.has_nvidia} 引擎={engine} "
+        f"模型={model_size} 编码器={env.ffmpeg_encoder}"
+    )
+
+    inputs = args.input
+    multi = len(inputs) > 1
+    if multi and (args.name or args.output or args.title or args.desc):
+        print("[提示] 多个输入时忽略 --name/--output/--title/--desc（改为按各视频自动命名）")
+
+    # 去重：相同视频号（本地文件为文件名）只处理一次，保持首次出现顺序
+    seen: set[str] = set()
+    queue: list[str] = []
+    for source in inputs:
+        vid = extract_video_id(source, is_url(source))
+        if vid in seen:
+            print(f"[跳过] 重复视频号 {vid}：{source}")
+            continue
+        seen.add(vid)
+        queue.append(source)
+
+    failures: list[tuple[str, str]] = []
+    for idx, source in enumerate(queue, 1):
+        if multi:
+            print(f"\n===== [{idx}/{len(queue)}] {source} =====")
+        try:
+            process_one(
+                source,
+                args=args,
+                cfg=cfg,
+                env=env,
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+                resume=resume,
+                name_override=None if multi else args.name,
+                output_override=None if multi else args.output,
+                title_override="" if multi else args.title,
+                desc_override="" if multi else args.desc,
+            )
+        except (SystemExit, Exception) as e:  # 批处理中单个失败不应终止整批
+            if not multi:
+                raise
+            failures.append((source, str(e)))
+            print(f"[跳过] 处理失败：{e}")
+
+    if multi:
+        ok = len(queue) - len(failures)
+        print(f"\n批处理完成：成功 {ok}/{len(queue)}")
+        for src, err in failures:
+            print(f"  失败：{src} — {err}")
+        if failures:
+            sys.exit(1)
 
 
 if __name__ == "__main__":
