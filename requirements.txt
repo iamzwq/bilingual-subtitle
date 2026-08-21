@@ -1,0 +1,10 @@
+# 一次性安装：pip install -r requirements.txt
+openai>=1.100.0
+yt-dlp>=2026.8.19
+faster-whisper>=1.2.1
+srt_equalizer>=0.1.12
+
+# 不要装 buzz-captions：它体积大、要求 Python 3.12（你的是 3.13，装了会报错）。
+# 转录用上面的 faster-whisper 即可；如仍想用 Buzz，装官方桌面版即可，无需 pip。
+
+

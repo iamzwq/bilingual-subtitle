@@ -1,0 +1,41 @@
+# 双语字幕流水线配置示例。复制为 config.toml 后填写。
+
+[llm]
+base_url = "https://token-plan-cn.xiaomimimo.com/v1"
+api_key = "在此填写你的 API key"
+model = "mimo-v2.5"          # 按你的平台实际模型名填写
+target_language = "简体中文"
+batch_size = 50          # 每批翻译的字幕条数
+temperature = 0.3
+
+[transcribe]
+# 转录引擎：fasterwhisper（默认，pip 装好即用）/ whispercpp
+engine = "fasterwhisper"
+# 主引擎失败时自动改用的回退引擎；留空则不回退
+fallback = ""
+# 模型大小，留空默认 large-v3-turbo（体积小、速度快、准确度接近 large）
+# 可选：tiny / base / small / medium / large / large-v2 / large-v3 / large-v3-turbo
+# model_size = "large-v3-turbo"
+# 长句自动重分段：每条字幕的最大字符数，0 = 关闭（已随 requirements 装好 srt_equalizer）
+equalize_max_chars = 0
+# --- faster-whisper 专用 ---
+device = "auto"          # auto / cuda / cpu（auto：有 N 卡用 GPU，失败自动退 CPU）
+compute_type = "auto"    # auto / float16 / int8 / int8_float16 ...
+# --- whisper.cpp 专用（仅当 engine/fallback = whispercpp）---
+whispercpp_bin = ""      # whisper-cli 可执行文件路径
+whispercpp_model = ""    # ggml 模型 .bin 路径
+
+[ffmpeg]
+# encoder 留空则自动：NVIDIA→h264_nvenc / Mac→h264_videotoolbox / 其它→libx264
+# encoder = "h264_nvenc"
+crf = 18                 # libx264/nvenc 画质（越小越清晰）
+preset = "medium"
+videotoolbox_bitrate = "8M"   # Mac 硬件编码码率（越大越清晰）
+
+[subtitle]
+font_name = "霞鹜文楷等宽"   # 未安装会自动 fallback 到系统默认字体
+cjk_font_size = 60           # 中文字号（相对 1920x1080）
+src_font_size = 36           # 原文字号
+cjk_max_chars = 28           # 中文每行最大字符数，超出软换行
+src_wrap_chars = 60          # 原文单行超过此长度按标点软换行
+margin_v = 60                # 底部边距
